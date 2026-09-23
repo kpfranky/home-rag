@@ -1,0 +1,34 @@
+# Python environments
+.venv/
+.venv-manual-backup/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+.env.*
+
+# Source and generated documents
+data/raw/*
+data/ocr/*
+data/pages/*
+
+!data/raw/.gitkeep
+!data/ocr/.gitkeep
+!data/pages/.gitkeep
+
+# Runtime files
+logs/
+tmp/
+*.log
