@@ -32,3 +32,6 @@ data/pages/*
 logs/
 tmp/
 *.log
+
+data/docling/*
+!data/docling/.gitkeep
