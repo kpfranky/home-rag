@@ -35,3 +35,6 @@ tmp/
 
 data/docling/*
 !data/docling/.gitkeep
+
+/data/backend_tests/
+/data/page_tests/

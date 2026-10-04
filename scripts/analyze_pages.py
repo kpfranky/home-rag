@@ -9,12 +9,13 @@ from typing import Any
 
 SCHEMA_NAME = "home-rag-page-analysis"
 SCHEMA_VERSION = 1
-ANALYZER_VERSION = "0.1.0"
+ANALYZER_VERSION = "0.2.0"
 
 MAX_BODY_TOP_GAP = 0.35
 MAX_SECTION_OPENER_TOP_GAP = 0.55
 MIN_TEXT_RATIO_TO_MEDIAN = 0.40
 MIN_SUBSTANTIVE_CHARACTERS = 20
+MIN_SUSPICIOUS_TEXT_REGION_OVERLAP = 0.50
 
 FURNITURE_LABELS = {
     "page_header",
@@ -84,6 +85,40 @@ def normalized_bbox(
         }
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def bbox_overlap_ratio(
+    first: dict[str, float],
+    second: dict[str, float],
+) -> float:
+    left = max(first["left"], second["left"])
+    top = max(first["top"], second["top"])
+    right = min(first["right"], second["right"])
+    bottom = min(first["bottom"], second["bottom"])
+
+    intersection_width = max(0.0, right - left)
+    intersection_height = max(0.0, bottom - top)
+    intersection_area = (
+        intersection_width * intersection_height
+    )
+
+    first_area = max(
+        0.0,
+        (first["right"] - first["left"])
+        * (first["bottom"] - first["top"]),
+    )
+    second_area = max(
+        0.0,
+        (second["right"] - second["left"])
+        * (second["bottom"] - second["top"]),
+    )
+
+    smaller_area = min(first_area, second_area)
+
+    if smaller_area <= 0:
+        return 0.0
+
+    return intersection_area / smaller_area
 
 
 def provenance_height(
@@ -259,6 +294,63 @@ def determine_roles(
     return roles
 
 
+def find_overlapping_text_regions(
+    blocks: list[dict[str, Any]],
+    page_number: int,
+) -> list[dict[str, Any]]:
+    findings = []
+
+    for block in blocks:
+        entries = []
+
+        for provenance in provenance_for_page(
+            block,
+            page_number,
+        ):
+            bbox = normalized_bbox(provenance)
+
+            if bbox is not None:
+                entries.append(
+                    {
+                        "charspan": (
+                            provenance.get("charspan")
+                        ),
+                        "bbox": bbox,
+                    }
+                )
+
+        for index, first in enumerate(entries):
+            for second in entries[index + 1:]:
+                ratio = bbox_overlap_ratio(
+                    first["bbox"],
+                    second["bbox"],
+                )
+
+                if (
+                    ratio
+                    < MIN_SUSPICIOUS_TEXT_REGION_OVERLAP
+                ):
+                    continue
+
+                findings.append(
+                    {
+                        "block_id": block["id"],
+                        "first_charspan": (
+                            first["charspan"]
+                        ),
+                        "second_charspan": (
+                            second["charspan"]
+                        ),
+                        "overlap_ratio": round(
+                            ratio,
+                            6,
+                        ),
+                    }
+                )
+
+    return findings
+
+
 def calculate_metrics(
     blocks: list[dict[str, Any]],
     page_number: int,
@@ -297,6 +389,13 @@ def calculate_metrics(
         for block in content_blocks
     )
 
+    overlapping_text_regions = (
+        find_overlapping_text_regions(
+            content_blocks,
+            page_number,
+        )
+    )
+
     return {
         "text_characters": text_characters,
         "text_blocks": len(content_blocks),
@@ -310,6 +409,9 @@ def calculate_metrics(
         "section_opener": any(
             block.get("subtype") == "section_header"
             for block in content_blocks
+        ),
+        "overlapping_text_regions": (
+            overlapping_text_regions
         ),
     }
 
@@ -336,6 +438,36 @@ def page_quality(
     body_median: float | None,
 ) -> dict[str, Any]:
     issues = []
+
+    overlapping = metrics[
+        "overlapping_text_regions"
+    ]
+
+    if overlapping:
+        affected_block_ids = sorted(
+            {
+                finding["block_id"]
+                for finding in overlapping
+            }
+        )
+        maximum_overlap = max(
+            finding["overlap_ratio"]
+            for finding in overlapping
+        )
+
+        issues.append(
+            make_issue(
+                code="OVERLAPPING_TEXT_REGIONS",
+                message=(
+                    "Text regions within the same block "
+                    "overlap suspiciously; reading order "
+                    "may be corrupted. Maximum overlap: "
+                    f"{maximum_overlap:.3f}."
+                ),
+                page_number=page_number,
+                block_ids=affected_block_ids,
+            )
+        )
 
     if role == "body":
         if metrics["text_blocks"] == 0:
@@ -476,6 +608,9 @@ def analyze_document(
             ),
             "min_substantive_characters": (
                 MIN_SUBSTANTIVE_CHARACTERS
+            ),
+            "min_suspicious_text_region_overlap": (
+                MIN_SUSPICIOUS_TEXT_REGION_OVERLAP
             ),
         },
         "summary": {
