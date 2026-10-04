@@ -17,7 +17,7 @@ DEFAULT_API_URL = "http://127.0.0.1:5001"
 
 SCHEMA_NAME = "home-rag-book"
 SCHEMA_VERSION = 1
-PIPELINE_VERSION = "0.2.0"
+PIPELINE_VERSION = "0.3.0"
 
 KNOWN_COLLECTIONS = {
     "texts": "text",
@@ -60,6 +60,19 @@ def parse_arguments() -> argparse.Namespace:
         ),
         help="Adres Docling Serve",
     )
+    parser.add_argument(
+        "--pdf-backend",
+        choices=(
+            "pypdfium2",
+            "docling_parse",
+            "threaded_docling_parse",
+            "dlparse_v1",
+            "dlparse_v2",
+            "dlparse_v4",
+        ),
+        default="pypdfium2",
+        help="Backend PDF Doclinga (domyślnie: pypdfium2)",
+    )
     return parser.parse_args()
 
 
@@ -79,6 +92,7 @@ def calculate_sha256(path: Path) -> str:
 def call_docling(
     pdf_path: Path,
     api_url: str,
+    pdf_backend: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     endpoint = f"{api_url.rstrip('/')}/v1/convert/file"
 
@@ -103,6 +117,10 @@ def call_docling(
         "to_formats=json",
         "--form",
         "do_ocr=false",
+        "--form",
+        "force_ocr=false",
+        "--form",
+        f"pdf_backend={pdf_backend}",
     ]
 
     print(f"Przetwarzanie przez Docling: {pdf_path}")
@@ -789,6 +807,7 @@ def main() -> None:
     payload, raw_document = call_docling(
         pdf_path=pdf_path,
         api_url=arguments.api_url,
+        pdf_backend=arguments.pdf_backend,
     )
 
     raw_path = output_dir / "raw_docling.json.gz"
@@ -833,6 +852,13 @@ def main() -> None:
         },
         "processor": {
             "name": "docling-serve",
+            "configuration": {
+                "pdf_backend": arguments.pdf_backend,
+                "do_ocr": False,
+                "force_ocr": False,
+                "from_formats": ["pdf"],
+                "to_formats": ["json"],
+            },
             "status": payload.get("status"),
             "processing_time_seconds": payload.get(
                 "processing_time"
