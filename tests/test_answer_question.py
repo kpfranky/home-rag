@@ -28,6 +28,33 @@ def answer():
 
 
 class AnswerTests(unittest.TestCase):
+    def test_renderer_deduplicates_exact_quotes_without_mutating_evidence(self):
+        item = answer()
+        item['claims'].append(deepcopy(item['claims'][0]))
+        item['claims'][1]['text'] = 'Drugie twierdzenie z tym samym dowodem.'
+        sources = [source()]
+        before_answer, before_sources = deepcopy(item), deepcopy(sources)
+        rendered = render_answer(item, sources)
+        self.assertEqual(rendered.count('[S1] „mgr farm. Marcin Mól”'), 1)
+        self.assertIn('Słowo wstępu podpisał Marcin Mól. [S1]', rendered)
+        self.assertIn('Drugie twierdzenie z tym samym dowodem. [S1]', rendered)
+        self.assertEqual(item, before_answer)
+        self.assertEqual(sources, before_sources)
+        self.assertEqual(render_answer(item, sources), rendered)
+
+    def test_renderer_keeps_distinct_quotes_and_distinct_sources(self):
+        first, second = source(), source()
+        second['source_id'], second['chunk_id'] = 'S2', 'chunk2'
+        item = answer()
+        item['claims'][0]['evidence'].extend([
+            {'source_id': 'S1', 'quote': 'Słowo wstępu.'},
+            {'source_id': 'S2', 'quote': 'mgr farm. Marcin Mól'}])
+        rendered = render_answer(validate_answer(item, [first, second]), [first, second])
+        quotes = rendered.split('Cytaty uzasadniające:')[1]
+        self.assertEqual(quotes.count('[S1] „mgr farm. Marcin Mól”'), 1)
+        self.assertEqual(quotes.count('[S1] „Słowo wstępu.”'), 1)
+        self.assertEqual(quotes.count('[S2] „mgr farm. Marcin Mól”'), 1)
+
     def test_list_longer_than_four_preserves_each_citation(self):
         sources = [{'source_id': 'S1', 'chunk_id': 'list', 'chunk': {
             'text': 'Pozycja A, Pozycja B, Pozycja C, Pozycja D, Pozycja E.'}}]
@@ -48,14 +75,17 @@ class AnswerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_answer(item, [source()])
 
-    def run_generation(self, generated, done_reason='stop', mode='single-pass', extracted=None):
+    def run_generation(self, generated, done_reason='stop', mode='single-pass', extracted=None,
+                       extra_args=(), thinking=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         output = Path(directory.name) / 'answer.json'
         response = {'done': True, 'done_reason': done_reason,
                     'message': {'content': json.dumps(generated)}}
+        if thinking is not None:
+            response['message']['thinking'] = thinking
         arguments = ['answer_question.py', str(Path(directory.name) / 'search.json'),
-                     '--model', 'local', '--mode', mode, '--output', str(output)]
+                     '--model', 'local', '--mode', mode, '--output', str(output), *extra_args]
         responses = [response]
         if mode == 'two-stage':
             responses.insert(0, {'done': True, 'done_reason': 'stop',
@@ -65,13 +95,55 @@ class AnswerTests(unittest.TestCase):
                 patch('answer_question.load_sources', return_value=(
                     'Kto podpisał?', [source()], 'searchhash', report)), \
                 patch('answer_question.local_model', return_value=('local', 'digest')), \
-                patch('answer_question.api_request', side_effect=responses), \
+                patch('answer_question.api_request', side_effect=responses) as api, \
                 patch('builtins.print'):
             try:
                 main()
             except SystemExit as error:
+                self.last_requests = [call.args[2] for call in api.call_args_list]
                 return json.loads(output.read_text()), error
+        self.last_requests = [call.args[2] for call in api.call_args_list]
         return json.loads(output.read_text()), None
+
+    def test_think_modes_apply_to_every_stage_and_preserve_trace(self):
+        extracted = {'items': [{'text': 'Podpis: Marcin Mól', 'evidence_id': 'S1:E1'}]}
+        synthesized = {'answerable': True, 'claims': [
+            {'text': 'Podpisał Marcin Mól.', 'evidence_ids': ['S1:E1']}]}
+        for mode in ('single-pass', 'two-stage'):
+            for think in ('false', 'true', 'auto'):
+                with self.subTest(mode=mode, think=think):
+                    result, error = self.run_generation(
+                        answer() if mode == 'single-pass' else synthesized,
+                        mode=mode, extracted=extracted,
+                        extra_args=['--think', think, '--num-predict', '4096'],
+                        thinking='A trace that must not become the answer')
+                    self.assertIsNone(error)
+                    self.assertEqual(result['thinking_mode'], think)
+                    self.assertEqual(len(self.last_requests), 1 if mode == 'single-pass' else 2)
+                    for request in self.last_requests:
+                        if think == 'auto':
+                            self.assertNotIn('think', request)
+                        else:
+                            self.assertIs(request['think'], think == 'true')
+                        self.assertNotIn('think', request['options'])
+                        self.assertEqual(request['options']['num_predict'], 4096)
+                    self.assertEqual(result['stages'][-1]['raw_response']['message']['thinking'],
+                                     'A trace that must not become the answer')
+                    self.assertNotIn('A trace', result['rendered_answer'])
+
+    def test_default_think_false_and_original_generation_budget(self):
+        result, error = self.run_generation(answer())
+        self.assertIsNone(error)
+        self.assertIs(self.last_requests[0]['think'], False)
+        self.assertEqual(result['options']['num_predict'], 2048)
+
+    def test_think_enabled_does_not_accept_truncated_response(self):
+        result, error = self.run_generation(answer(), done_reason='length',
+                                            extra_args=['--think', 'true'], thinking='Trace')
+        self.assertIsNotNone(error)
+        self.assertEqual(result['status'], 'validation_failed')
+        self.assertEqual(result['stages'][0]['raw_response']['message']['thinking'], 'Trace')
+        self.assertNotIn('rendered_answer', result)
 
     def test_generation_saves_validated_answer(self):
         result, error = self.run_generation(answer())

@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "evaluation": "manual; unit tests do not validate model semantics",
+  "baseline": {
+    "model": "qwen3.5:4b",
+    "ollama_version": "0.40.1",
+    "mode": "two-stage",
+    "think": false,
+    "top_k": 5,
+    "num_predict": 2048
+  },
+  "cases": [
+    {
+      "id": "substances",
+      "retrieval_file": "search_result.json",
+      "query": "Jakie substancje aktywne zawiera muchomor czerwony?",
+      "expected_answerable": true,
+      "required_names": [
+        "muskazon",
+        "kwas tricholomowy",
+        "kwas stilozobowy",
+        "kwas stilozobinowy",
+        "kwasy propionowe",
+        "muskaryna",
+        "kwas ibotenowy",
+        "muscymol"
+      ],
+      "checks": [
+        "Accept grammatical inflections of required names.",
+        "All eight names supported by the supplied source texts; no external factual validation.",
+        "S4 supports the activity of kwas ibotenowy and muscymol; S3 alone lists their presence.",
+        "No unrelated effects, medical recommendations or cultural history."
+      ],
+      "baseline_v022": "Complete list; repeated displayed quotes."
+    },
+    {
+      "id": "vineyard",
+      "retrieval_file": "search_winnica.json",
+      "query": "Jak założyć winnicę?",
+      "expected_answerable": false,
+      "checks": [
+        "Explicit refusal due to absent source evidence.",
+        "No instructions about mushrooms or vineyard construction."
+      ],
+      "baseline_v022": "Correct refusal; empty extraction; no synthesis."
+    },
+    {
+      "id": "signature",
+      "retrieval_file": "search_control_1.json",
+      "query": "Kto podpisał słowo wstępu?",
+      "expected_answerable": true,
+      "required_names": [
+        "Marcin Mól"
+      ],
+      "checks": [
+        "Identify the signature and cite its source on PDF page 11.",
+        "Do not identify Paracelsus as the signatory or add his unrelated quotation.",
+        "Do not silently repair OCR when presenting text as a direct quotation."
+      ],
+      "baseline_v022": "Partial: correct signature plus irrelevant Paracelsus claim and modified quotation."
+    },
+    {
+      "id": "champignons",
+      "retrieval_file": "search_control_2.json",
+      "query": "Jak uprawiać pieczarki?",
+      "expected_answerable": false,
+      "checks": [
+        "Explicit refusal due to absent source evidence.",
+        "No substitution of Amanita preparation for champignon cultivation.",
+        "Record irrelevant extraction separately from final-answer correctness."
+      ],
+      "baseline_v022": "Correct final refusal; four extracted items later rejected by synthesis."
+    }
+  ]
+}

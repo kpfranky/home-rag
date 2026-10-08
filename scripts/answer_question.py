@@ -13,7 +13,7 @@ import urllib.request
 
 from search_chunks import load_index
 
-VERSION = '0.2.1'
+VERSION = '0.2.3'
 MAX_CLAIMS = 16
 NO_ANSWER = 'Brak odpowiedzi w dostarczonych źródłach.'
 SYSTEM = '''Odpowiadasz po polsku wyłącznie na podstawie dostarczonych fragmentów.
@@ -207,12 +207,16 @@ def validate_selected_evidence(answer, items):
 
 
 def generate_stage(args, name, options, messages, schema, output, stage, source_id=None):
-    audit = {'stage': stage, 'source_id': source_id, 'messages': messages}
+    audit = {'stage': stage, 'source_id': source_id, 'messages': messages,
+             'thinking_mode': args.think}
     output['stages'].append(audit)
     write_output(args.output, output)
-    response = api_request(args.api_url, '/api/chat', {
+    request = {
         'model': name, 'messages': messages, 'format': schema, 'stream': False,
-        'options': options, 'keep_alive': '5m'}, timeout=args.timeout)
+        'options': options, 'keep_alive': '5m'}
+    if args.think != 'auto':
+        request['think'] = args.think == 'true'
+    response = api_request(args.api_url, '/api/chat', request, timeout=args.timeout)
     audit['raw_response'] = response
     write_output(args.output, output)
     if response.get('done') is not True or response.get('done_reason') == 'length':
@@ -315,8 +319,13 @@ def render_answer(answer, sources):
                      f"oznaczenie drukowane: {chunk.get('printed_page_labels') or 'brak'}; "
                      f"chunk: {lookup[sid]['chunk_id']}")
     lines.append('\nCytaty uzasadniające:')
+    seen_quotes = set()
     for claim in answer['claims']:
         for evidence in claim['evidence']:
+            key = (evidence['source_id'], evidence['quote'])
+            if key in seen_quotes:
+                continue
+            seen_quotes.add(key)
             lines.append(f"[{evidence['source_id']}] „{evidence['quote']}”")
     return '\n\n'.join(lines)
 
@@ -366,9 +375,15 @@ def main():
     parser.add_argument('--top-k', type=int, default=5)
     parser.add_argument('--mode', choices=('two-stage', 'single-pass'), default='two-stage')
     parser.add_argument('--timeout', type=int, default=600)
+    parser.add_argument('--think', choices=('false', 'true', 'auto'), default='false',
+                        help='Tryb myślenia Ollama; auto używa ustawienia modelu')
+    parser.add_argument('--num-predict', type=int, default=2048,
+                        help='Limit generowania dla każdego etapu; domyślnie 2048')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--prepare-only', action='store_true', help='Save prompt without calling Ollama')
     args = parser.parse_args()
+    if args.num_predict < 1:
+        parser.error('--num-predict must be positive')
     if args.top_k < 1 or args.timeout < 1 or (not args.prepare_only and not args.model):
         parser.error('Positive top-k/timeout and --model required (except --prepare-only)')
     embeddings = args.embeddings or args.search_path.with_name('embeddings.jsonl')
@@ -378,10 +393,13 @@ def main():
     query, sources, search_hash, report = load_sources(args.search_path, embeddings, report_path,
                                                        args.top_k)
     messages = messages_for(query, sources)
+    options = {'temperature': 0, 'seed': 0, 'num_ctx': 8192,
+               'num_predict': args.num_predict}
     output = {'schema_name': 'home-rag-answer', 'schema_version': 1,
               'generator_version': VERSION, 'query': query, 'sources': sources,
               'search_sha256': search_hash, 'index_sha256': report['output_sha256'],
               'retrieval_model': report['model'], 'mode': args.mode, 'stages': [],
+              'thinking_mode': args.think, 'options': options,
               'validation_scope': 'schema, citation IDs and literal quotes; not semantic entailment'}
     if args.prepare_only:
         output.update(status='prepared', messages=messages, response_schema=SCHEMA)
@@ -398,7 +416,6 @@ def main():
         print(NO_ANSWER)
         return
     name, digest = local_model(args.api_url, args.model, args.timeout)
-    options = {'temperature': 0, 'seed': 0, 'num_ctx': 8192, 'num_predict': 2048}
     output.update(model=name, model_digest=digest, options=options, status='running')
     try:
         if args.mode == 'two-stage':
