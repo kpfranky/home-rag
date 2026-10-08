@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from answer_question import (NO_ANSWER, load_sources, local_model, messages_for,
                              MAX_CLAIMS, SCHEMA, main, render_answer, validate_answer,
                              validate_extraction, validate_selected_evidence,
-                             evidence_catalog, resolve_answer, extraction_schema)
+                             evidence_catalog, resolve_answer, extraction_schema,
+                             select_assessed_sources)
 
 
 def source():
@@ -76,7 +77,8 @@ class AnswerTests(unittest.TestCase):
             validate_answer(item, [source()])
 
     def run_generation(self, generated, done_reason='stop', mode='single-pass', extracted=None,
-                       extra_args=(), thinking=None):
+                       extra_args=(), thinking=None, assessment_decision=None,
+                       input_sources=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         output = Path(directory.name) / 'answer.json'
@@ -86,6 +88,15 @@ class AnswerTests(unittest.TestCase):
             response['message']['thinking'] = thinking
         arguments = ['answer_question.py', str(Path(directory.name) / 'search.json'),
                      '--model', 'local', '--mode', mode, '--output', str(output), *extra_args]
+        sources = input_sources if input_sources is not None else [source()]
+        if assessment_decision is not None:
+            assessment_path = Path(directory.name) / 'assessment.json'
+            assessment_path.write_text(json.dumps({
+                'schema_name': 'home-rag-answerability', 'schema_version': 1,
+                'status': 'assessed', 'query': 'Kto podpisał?', 'sources': sources,
+                'search_sha256': 'searchhash', 'index_sha256': 'hash',
+                'decision': assessment_decision}))
+            arguments.extend(['--assessment', str(assessment_path)])
         responses = [response]
         if mode == 'two-stage':
             responses.insert(0, {'done': True, 'done_reason': 'stop',
@@ -93,8 +104,8 @@ class AnswerTests(unittest.TestCase):
         report = {'output_sha256': 'hash', 'model': {'model_id': 'e5'}}
         with patch.object(sys, 'argv', arguments), \
                 patch('answer_question.load_sources', return_value=(
-                    'Kto podpisał?', [source()], 'searchhash', report)), \
-                patch('answer_question.local_model', return_value=('local', 'digest')), \
+                    'Kto podpisał?', sources, 'searchhash', report)), \
+                patch('answer_question.local_model', return_value=('local', 'digest')) as model, \
                 patch('answer_question.api_request', side_effect=responses) as api, \
                 patch('builtins.print'):
             try:
@@ -103,7 +114,72 @@ class AnswerTests(unittest.TestCase):
                 self.last_requests = [call.args[2] for call in api.call_args_list]
                 return json.loads(output.read_text()), error
         self.last_requests = [call.args[2] for call in api.call_args_list]
+        self.last_model_calls = model.call_count
         return json.loads(output.read_text()), None
+
+    def test_assessment_negative_bypasses_all_model_requests_and_retains_audit(self):
+        result, error = self.run_generation(answer(), assessment_decision={
+            'sufficient': False, 'source_ids': [], 'reason': 'Brak dowodów.'})
+        self.assertIsNone(error)
+        self.assertEqual(self.last_requests, [])
+        self.assertEqual(self.last_model_calls, 0)
+        self.assertEqual(result['status'], 'insufficient_evidence')
+        self.assertEqual(result['sources'], [])
+        self.assertEqual(result['retrieved_sources'], [source()])
+        self.assertEqual(result['assessment']['report']['decision']['reason'], 'Brak dowodów.')
+        self.assertEqual(result['stages'], [])
+
+    def test_assessment_selected_source_only_reaches_extraction_and_synthesis(self):
+        other = deepcopy(source())
+        other['source_id'], other['chunk_id'], other['chunk']['text'] = 'S3', 'other', 'Paracelsus'
+        generated = {'answerable': True, 'claims': [
+            {'text': 'Podpisał Marcin Mól.', 'evidence_ids': ['S1:E1']}]}
+        result, error = self.run_generation(generated, mode='two-stage', extracted={
+            'items': [{'text': 'Marcin Mól', 'evidence_id': 'S1:E1'}]},
+            assessment_decision={'sufficient': True, 'source_ids': ['S1'], 'reason': 'Podpis.'},
+            input_sources=[source(), other])
+        self.assertIsNone(error)
+        self.assertEqual(result['selected_source_ids'], ['S1'])
+        self.assertEqual(result['retrieved_sources'], [source(), other])
+        self.assertEqual(result['sources'], [source()])
+        self.assertEqual(len(self.last_requests), 2)
+        self.assertTrue(all('Paracelsus' not in json.dumps(r) for r in self.last_requests))
+
+    def test_assessment_mismatches_and_invalid_decisions_rejected(self):
+        base = {'schema_name': 'home-rag-answerability', 'schema_version': 1,
+                'status': 'assessed', 'query': 'Pytanie?', 'sources': [source()],
+                'search_sha256': 'searchhash', 'index_sha256': 'indexhash',
+                'decision': {'sufficient': True, 'source_ids': ['S1'], 'reason': 'Dowód.'}}
+        changes = [('query', 'Inne?'), ('search_sha256', 'other'), ('index_sha256', 'other'),
+                   ('sources', []), ('status', 'prepared'), ('schema_version', 2),
+                   ('decision', {'sufficient': True, 'source_ids': ['S99'], 'reason': 'X'}),
+                   ('decision', {'sufficient': False, 'source_ids': ['S1'], 'reason': 'X'}),
+                   ('decision', {'sufficient': True, 'source_ids': ['S1', 'S1'], 'reason': 'X'})]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'assessment.json'
+            for key, value in changes:
+                candidate = deepcopy(base); candidate[key] = value
+                path.write_text(json.dumps(candidate))
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    select_assessed_sources(path, 'Pytanie?', [source()], 'searchhash', 'indexhash')
+            candidate = deepcopy(base); candidate['sources'][0]['chunk']['text'] = 'Changed text'
+            path.write_text(json.dumps(candidate))
+            with self.assertRaises(ValueError):
+                select_assessed_sources(path, 'Pytanie?', [source()], 'searchhash', 'indexhash')
+
+    def test_assessment_preserves_retrieval_order_and_original_source_ids(self):
+        first, third = source(), deepcopy(source())
+        third['source_id'], third['chunk_id'] = 'S3', 'chunk3'
+        sources = [first, third]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'assessment.json'
+            path.write_text(json.dumps({'schema_name': 'home-rag-answerability',
+                'schema_version': 1, 'status': 'assessed', 'query': 'Q', 'sources': sources,
+                'search_sha256': 's', 'index_sha256': 'i', 'decision': {
+                    'sufficient': True, 'source_ids': ['S3', 'S1'], 'reason': 'Dowody.'}}))
+            selected, audit = select_assessed_sources(path, 'Q', sources, 's', 'i')
+            self.assertEqual([s['source_id'] for s in selected], ['S1', 'S3'])
+            self.assertEqual(len(audit['sha256']), 64)
 
     def test_think_modes_apply_to_every_stage_and_preserve_trace(self):
         extracted = {'items': [{'text': 'Podpis: Marcin Mól', 'evidence_id': 'S1:E1'}]}

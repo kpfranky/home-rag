@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "query": "Kto podpisał słowo wstępu?",
+  "items": [
+    {
+      "evidence_id": "S1:E1",
+      "source_id": "S1",
+      "quote": "mgr farm. Marcin Mól",
+      "text_span": {
+        "start": 0,
+        "end": 20
+      },
+      "text": "Mgr farm. Marcin Mól"
+    },
+    {
+      "evidence_id": "S3:E1",
+      "source_id": "S3",
+      "quote": "„Wszystko jest trucizną inic nie jest trucizną, bo tylko dawka czyni truciznę\" Paracelsus",
+      "text_span": {
+        "start": 0,
+        "end": 89
+      },
+      "text": "Paracelsus"
+    }
+  ],
+  "baseline_answer": {
+    "answerable": true,
+    "claims": [
+      {
+        "text": "Słowo wstępu podpisał mgr farm. Marcin Mól.",
+        "evidence": [
+          {
+            "source_id": "S1",
+            "quote": "mgr farm. Marcin Mól"
+          }
+        ]
+      },
+      {
+        "text": "W słowie wstępu odniesiono się do Paracelsusa i jego cytatu: „Wszystko jest trucizną, nic nie jest trucizną, bo tylko dawka czyni truciznę”.",
+        "evidence": [
+          {
+            "source_id": "S3",
+            "quote": "„Wszystko jest trucizną inic nie jest trucizną, bo tylko dawka czyni truciznę\" Paracelsus"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "answerable": true,
+    "required_person": "Marcin Mól",
+    "allowed_evidence_ids": [
+      "S1:E1"
+    ],
+    "checks": [
+      "No additional statement about the epigraph author.",
+      "No direct quotation inside claim text."
+    ],
+    "evaluation": "manual real-model test; not guaranteed by unit tests"
+  }
+}

@@ -13,7 +13,7 @@ import urllib.request
 
 from search_chunks import load_index
 
-VERSION = '0.2.3'
+VERSION = '0.3.0'
 MAX_CLAIMS = 16
 NO_ANSWER = 'Brak odpowiedzi w dostarczonych źródłach.'
 SYSTEM = '''Odpowiadasz po polsku wyłącznie na podstawie dostarczonych fragmentów.
@@ -365,11 +365,35 @@ def write_output(path, value):
                     encoding='utf-8')
 
 
+def select_assessed_sources(path, query, sources, search_hash, index_hash):
+    # Delayed import avoids a module-initialization cycle with the standalone assessor.
+    from assess_sources import validate_decision
+    raw = path.read_bytes()
+    assessment = json.loads(raw)
+    if (not isinstance(assessment, dict)
+            or assessment.get('schema_name') != 'home-rag-answerability'
+            or assessment.get('schema_version') != 1
+            or assessment.get('status') != 'assessed'):
+        raise ValueError('Assessment must be a completed home-rag-answerability report')
+    if (assessment.get('query') != query
+            or assessment.get('search_sha256') != search_hash
+            or assessment.get('index_sha256') != index_hash
+            or assessment.get('sources') != sources):
+        raise ValueError('Assessment does not match question, retrieval, index or source snapshot')
+    decision = validate_decision(assessment.get('decision'), sources)
+    selected_ids = set(decision['source_ids'])
+    selected = [source for source in sources if source['source_id'] in selected_ids]
+    return selected, {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(),
+                      'report': assessment}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('search_path', type=Path)
     parser.add_argument('--embeddings', type=Path)
     parser.add_argument('--embedding-report', type=Path)
+    parser.add_argument('--assessment', type=Path,
+                        help='Opcjonalny zapisany raport assess_sources; zgodne źródła i hashe wymagane')
     parser.add_argument('--model', help='Exact installed Ollama model name')
     parser.add_argument('--api-url', default='http://127.0.0.1:11434')
     parser.add_argument('--top-k', type=int, default=5)
@@ -388,10 +412,18 @@ def main():
         parser.error('Positive top-k/timeout and --model required (except --prepare-only)')
     embeddings = args.embeddings or args.search_path.with_name('embeddings.jsonl')
     report_path = args.embedding_report or embeddings.with_name('embedding_report.json')
-    if args.output.resolve() in {p.resolve() for p in (args.search_path, embeddings, report_path)}:
+    inputs = [args.search_path, embeddings, report_path]
+    if args.assessment:
+        inputs.append(args.assessment)
+    if args.output.resolve() in {p.resolve() for p in inputs}:
         parser.error('Output must differ from input files')
     query, sources, search_hash, report = load_sources(args.search_path, embeddings, report_path,
                                                        args.top_k)
+    retrieved_sources = sources
+    assessment_audit = None
+    if args.assessment:
+        sources, assessment_audit = select_assessed_sources(
+            args.assessment, query, sources, search_hash, report['output_sha256'])
     messages = messages_for(query, sources)
     options = {'temperature': 0, 'seed': 0, 'num_ctx': 8192,
                'num_predict': args.num_predict}
@@ -399,8 +431,13 @@ def main():
               'generator_version': VERSION, 'query': query, 'sources': sources,
               'search_sha256': search_hash, 'index_sha256': report['output_sha256'],
               'retrieval_model': report['model'], 'mode': args.mode, 'stages': [],
+              'synthesis_prompt_version': 1 if args.mode == 'two-stage' else None,
               'thinking_mode': args.think, 'options': options,
               'validation_scope': 'schema, citation IDs and literal quotes; not semantic entailment'}
+    if assessment_audit is not None:
+        output.update(assessment=assessment_audit, retrieved_sources=retrieved_sources,
+                      selected_source_ids=[source['source_id'] for source in sources])
+        print('Assessment selected:', output['selected_source_ids'])
     if args.prepare_only:
         output.update(status='prepared', messages=messages, response_schema=SCHEMA)
         if args.mode == 'two-stage':
@@ -411,7 +448,8 @@ def main():
         return
     if not sources:
         answer = {'answerable': False, 'claims': []}
-        output.update(status='no_sources', answer=answer, rendered_answer=NO_ANSWER)
+        output.update(status='insufficient_evidence' if assessment_audit else 'no_sources',
+                      answer=answer, rendered_answer=NO_ANSWER)
         write_output(args.output, output)
         print(NO_ANSWER)
         return
