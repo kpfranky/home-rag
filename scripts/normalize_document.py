@@ -8,13 +8,48 @@ import json
 from pathlib import Path
 import re
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 FURNITURE = {"page_header", "page_footer"}
 LETTERS = r"[^\W\d_]"
 
 
 def normalize_text(text):
     return " ".join(str(text or "").split())
+
+
+def printed_label(text):
+    """Accept only a whole Arabic or canonical Roman page label."""
+    text = normalize_text(text)
+    if re.fullmatch(r'[0-9]{1,6}', text):
+        return text
+    if (text and re.fullmatch(r'[IVXLCDMivxlcdm]+', text)
+            and re.fullmatch(r'M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})', text.upper())):
+        return text
+    return None
+
+
+def page_metadata(document):
+    """Raw footer evidence is separate from accepted page-label candidates.
+
+    Numeric OCR candidates are not automatically verified against the scan.
+    PDF page indices are never substituted for printed labels.
+    """
+    blocks = {b['id']: b for b in document['blocks']}
+    result = {}
+    for page in document['pages']:
+        raw = [{'block_id': bid, 'text': blocks[bid].get('text') or '',
+                'provenance': deepcopy([p for p in blocks[bid].get('provenance') or []
+                                        if p.get('page_number') == page['page_number']])}
+               for bid in page['block_ids'] if blocks[bid].get('subtype') == 'page_footer']
+        labels = list(dict.fromkeys(label for item in raw
+                                   if (label := printed_label(item['text'])) is not None))
+        result[page['page_number']] = {
+            'printed_page_labels': labels if len(labels) == 1 else [],
+            'page_footer_raw': raw,
+            'printed_page_label_status': ('unverified_ocr' if len(labels) == 1
+                                          else 'ambiguous' if labels else 'missing'),
+        }
+    return result
 
 
 def join_split_word(left, right):
@@ -80,6 +115,7 @@ def export_document(document, analysis, source_id=None, join_hyphens=True):
     section = []
     previous_role = None
     fragments_cache = {}
+    metadata = page_metadata(document)
     for page in sorted(pages, key=lambda p: p['page_number']):
         number = page['page_number']
         report = reports[number]
@@ -94,8 +130,6 @@ def export_document(document, analysis, source_id=None, join_hyphens=True):
         ids = page['block_ids']
         if len(set(ids)) != len(ids):
             raise ValueError(f"Duplicate page block references: {number}")
-        footer_labels = [normalize_text(blocks[i].get('text')) for i in ids
-                         if blocks[i].get('subtype') == 'page_footer']
         previous = None
         for position, block_id in enumerate(ids):
             block = blocks[block_id]
@@ -132,7 +166,7 @@ def export_document(document, analysis, source_id=None, join_hyphens=True):
                 'subtype': subtype,
                 'page_numbers': [number],
                 'page_role': role,
-                'printed_page_labels': footer_labels.copy(),
+                **deepcopy(metadata[number]),
                 'block_ids': [block_id],
                 'section_path': section.copy(),
                 'provenance': provenance,

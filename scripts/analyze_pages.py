@@ -9,7 +9,7 @@ from typing import Any
 
 SCHEMA_NAME = "home-rag-page-analysis"
 SCHEMA_VERSION = 1
-ANALYZER_VERSION = "0.2.0"
+ANALYZER_VERSION = "0.3.0"
 
 MAX_BODY_TOP_GAP = 0.35
 MAX_SECTION_OPENER_TOP_GAP = 0.55
@@ -50,7 +50,74 @@ def parse_arguments() -> argparse.Namespace:
             "page_analysis.json obok document.json."
         ),
     )
+    parser.add_argument(
+        "--page-reviews", type=Path,
+        help="Potwierdzone układy stron powiązane z SHA-256 źródłowego PDF.",
+    )
     return parser.parse_args()
+
+
+REVIEW_LAYOUTS = {
+    "blank", "dedication", "part_divider", "illustrated_opener",
+    "visual_page", "mixed_visual", "table_page",
+}
+
+
+def validate_page_reviews(document, review):
+    """Confirmations describe layout only; they never certify OCR semantics."""
+    if review is None:
+        return {}
+    if not isinstance(review, dict) or review.get("schema_name") != "home-rag-page-reviews":
+        raise ValueError("Expected home-rag-page-reviews")
+    if type(review.get("schema_version")) is not int or review["schema_version"] != 1:
+        raise ValueError("Unsupported page-review schema version")
+    sha = (document.get("source") or {}).get("sha256")
+    if not sha or review.get("source_sha256") != sha:
+        raise ValueError("Page reviews/source SHA-256 mismatch")
+    if not isinstance(review.get("pages"), list):
+        raise ValueError("Page reviews must contain a pages list")
+    numbers = {p["page_number"] for p in document.get("pages") or []}
+    result = {}
+    for entry in review["pages"]:
+        if not isinstance(entry, dict):
+            raise ValueError("Invalid page review")
+        number = entry.get("page_number")
+        if type(number) is not int or number not in numbers or number in result:
+            raise ValueError("Unknown or duplicate reviewed page")
+        if entry.get("layout") not in REVIEW_LAYOUTS:
+            raise ValueError("Unknown reviewed layout")
+        if not isinstance(entry.get("note"), str) or not entry["note"].strip():
+            raise ValueError("Page review needs a nonempty note")
+        if entry.get("confirmed") is not True:
+            raise ValueError("Page review must be explicitly confirmed")
+        for key in ("expected_tables", "expected_table_columns"):
+            if key in entry and (type(entry[key]) is not int or entry[key] < 1):
+                raise ValueError("Invalid table expectation")
+        result[number] = dict(entry)
+    return result
+
+
+def reviewed_layout_issues(page_number, blocks, review):
+    ids = [b["id"] for b in blocks]
+    layout = review["layout"]
+    # Blank confirmations must not hide extracted content, even short text.
+    nonempty = [b for b in blocks if b.get("type") in {"picture", "table"}
+                or (b.get("type") == "text" and normalize_text(b.get("text")))]
+    tables = [b for b in blocks if b.get("type") == "table"]
+    mismatch = None
+    if layout == "blank" and nonempty:
+        mismatch = "Confirmed blank page contains extracted content."
+    elif layout in {"illustrated_opener", "visual_page", "mixed_visual", "part_divider"} and not any(b.get("type") == "picture" for b in blocks):
+        mismatch = "Reviewed illustrated layout has no extracted picture block."
+    elif layout == "dedication" and not any(b.get("type") == "text" and normalize_text(b.get("text")) for b in blocks):
+        mismatch = "Reviewed dedication has no extracted text."
+    elif layout == "table_page" and not tables:
+        mismatch = "Reviewed table page has no extracted table."
+    if "expected_tables" in review and len(tables) != review["expected_tables"]:
+        mismatch = "Extracted table count differs from the confirmed layout."
+    if "expected_table_columns" in review and any((b.get("data") or {}).get("columns") != review["expected_table_columns"] for b in tables):
+        mismatch = "Extracted table columns differ from the confirmed layout."
+    return [make_issue("REVIEW_LAYOUT_MISMATCH", mismatch, page_number, ids)] if mismatch else []
 
 
 def normalize_text(value: Any) -> str:
@@ -397,6 +464,13 @@ def calculate_metrics(
     )
 
     return {
+        "picture_blocks": sum(b.get("type") == "picture" for b in blocks),
+        "table_blocks": sum(b.get("type") == "table" for b in blocks),
+        "caption_blocks": sum(b.get("subtype") == "caption" for b in blocks),
+        "tables": [{"block_id": b["id"], "rows": (b.get("data") or {}).get("rows"),
+                    "columns": (b.get("data") or {}).get("columns"),
+                    "cell_count": (b.get("data") or {}).get("cell_count")}
+                   for b in blocks if b.get("type") == "table"],
         "text_characters": text_characters,
         "text_blocks": len(content_blocks),
         "top_text_position": top,
@@ -550,7 +624,9 @@ def document_status(
 
 def analyze_document(
     document: dict[str, Any],
+    page_reviews: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    reviews = validate_page_reviews(document, page_reviews)
     roles = determine_roles(document)
     prepared_pages = []
 
@@ -585,6 +661,14 @@ def analyze_document(
     )
 
     for page in prepared_pages:
+        number = page["page_number"]
+        review = reviews.get(number)
+        # Keep existing role values for downstream normalizer/chunker compatibility.
+        # Blank pages keep their role so a chapter path is not reset at every blank.
+        if review and review["layout"] == "dedication":
+            page["role"] = "front_matter"
+        page["layout"] = review["layout"] if review else "unconfirmed"
+        page["layout_review"] = review
         page["quality"] = page_quality(
             page_number=page["page_number"],
             role=page["role"],
@@ -592,13 +676,36 @@ def analyze_document(
             block_ids=page["block_ids"],
             body_median=body_median,
         )
+        if review:
+            blocks = blocks_for_page(document, {"block_ids": page["block_ids"]})
+            conflicts = reviewed_layout_issues(number, blocks, review)
+            if conflicts:
+                page["quality"]["issues"].extend(conflicts)
+                if page["quality"]["status"] != "fail":
+                    page["quality"]["status"] = "review"
+            else:
+                # Only layout heuristics are superseded. Overlap checks stay active.
+                layout_codes = {"NO_BODY_TEXT", "LARGE_EMPTY_TOP_AREA", "LOW_TEXT_VOLUME"}
+                page["quality"]["waived_layout_issues"] = [
+                    i for i in page["quality"]["issues"] if i["code"] in layout_codes]
+                page["quality"]["issues"] = [
+                    i for i in page["quality"]["issues"] if i["code"] not in layout_codes]
+                page["quality"]["status"] = "review" if page["quality"]["issues"] else "pass"
 
     return {
         "schema_name": SCHEMA_NAME,
         "schema_version": SCHEMA_VERSION,
         "analyzer_version": ANALYZER_VERSION,
+        "scope": "role_aware_page_layout",
+        "limitations": [
+            "PASS covers page-layout checks, not semantic OCR correctness or completeness.",
+            "Picture blocks may contain several photos or charts; interpretation is pending.",
+            "Table counts and columns do not certify cell contents or reading order.",
+            "Text volume on multipage blocks is estimated using provenance geometry.",
+        ],
         "source": document.get("source"),
         "configuration": {
+            "page_reviews": page_reviews,
             "max_body_top_gap": MAX_BODY_TOP_GAP,
             "max_section_opener_top_gap": (
                 MAX_SECTION_OPENER_TOP_GAP
@@ -641,7 +748,10 @@ def main() -> None:
         )
     )
 
-    report = analyze_document(document)
+    review = None
+    if arguments.page_reviews:
+        review = json.loads(arguments.page_reviews.read_text(encoding="utf-8"))
+    report = analyze_document(document, review)
 
     output_path = (
         arguments.output
@@ -649,6 +759,10 @@ def main() -> None:
             "page_analysis.json"
         )
     )
+
+    if output_path.resolve() in {arguments.document_path.resolve(),
+                                  arguments.page_reviews.resolve() if arguments.page_reviews else None}:
+        raise ValueError("Output must not overwrite document or page reviews")
 
     output_path.write_text(
         json.dumps(
@@ -671,6 +785,7 @@ def main() -> None:
         print(
             f"strona={page['page_number']:02d} "
             f"rola={page['role']:16} "
+            f"układ={page['layout']:18} "
             f"status={page['quality']['status']:6} "
             f"top={page['metrics']['top_text_position']} "
             f"znaki={page['metrics']['text_characters']} "

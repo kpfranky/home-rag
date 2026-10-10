@@ -1,0 +1,51 @@
+{
+  "schema_name": "home-rag-table-review",
+  "schema_version": 1,
+  "review_id": "sample_book_100-p97-v010",
+  "source_sha256": "b757ccd2f0d05f06a6dbc20c3f4518891926e99d72479425f84b6beaa0647372",
+  "page_number": 97,
+  "block_id": "#/tables/5",
+  "table_data_sha256": "babdf40585f8bf291f5531f3a9a79e44242b4fd4503ccbc6c7a2e8ce7769ca17",
+  "column_headers": [
+    {
+      "column_index": 0,
+      "text": "Kondycja",
+      "source": "verified_scan_header"
+    },
+    {
+      "column_index": 1,
+      "text": "Pozytywne efekty",
+      "source": "verified_scan_header"
+    },
+    {
+      "column_index": 2,
+      "text": "Brak wyników",
+      "source": "verified_scan_header"
+    },
+    {
+      "column_index": 3,
+      "text": "Negatywne efekty",
+      "source": "verified_scan_header"
+    }
+  ],
+  "cell_edits": [
+    {
+      "row_index": 0,
+      "column_index": 1,
+      "before": "9% (61)",
+      "after": "59% (61)",
+      "reason": "Właściciel potwierdził 59% (61); wartość sprawdzona także w skanie p97.pdf."
+    }
+  ],
+  "evidence": {
+    "filename": "p97.pdf",
+    "sha256": "86234fcf30e9830fb240a3315153bfde363a86d2a3bb7fe2312d2d54dc021c52",
+    "extract_page": 1,
+    "book_pdf_page": 97,
+    "method": "visual_scan_review_and_owner_confirmation"
+  },
+  "limitations": [
+    "Nie potwierdzono wszystkich komórek tabeli.",
+    "Niespójności obecne w książce nie są automatycznie korygowane."
+  ]
+}

@@ -13,7 +13,7 @@ import urllib.request
 
 from search_chunks import load_index
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 MAX_CLAIMS = 16
 NO_ANSWER = 'Brak odpowiedzi w dostarczonych źródłach.'
 SYSTEM = '''Odpowiadasz po polsku wyłącznie na podstawie dostarczonych fragmentów.
@@ -70,6 +70,29 @@ EXTRACTION_SCHEMA = {
 
 
 def evidence_catalog(source):
+    if source['chunk'].get('chunk_type') == 'table':
+        text = source['chunk']['text']
+        starts = list(re.finditer(r'^r([0-9]+) c[0-9]+:', text, re.MULTILINE))
+        rows = []
+        for match in starts:
+            if not rows or match[1] != rows[-1][0]:
+                rows.append((match[1], match.start()))
+        # Keep complete rows together. The header and first row form one
+        # contiguous quote; longer rows fall back to the lossless text splitter.
+        if rows and text[:rows[0][1]].startswith('Kolumny:'):
+            edges = [0] + [start for _, start in rows[1:]] + [len(text)]
+            spans = []
+            for left, right in zip(edges, edges[1:]):
+                while left < right and text[left].isspace():
+                    left += 1
+                while right > left and text[right-1].isspace():
+                    right -= 1
+                spans.append((left, right))
+            if all(0 < right-left <= 320 for left, right in spans):
+                return [{'evidence_id': f"{source['source_id']}:E{i+1}",
+                         'source_id': source['source_id'], 'quote': text[left:right],
+                         'text_span': {'start': left, 'end': right}}
+                        for i, (left, right) in enumerate(spans)]
     text, start, catalog = source['chunk']['text'], 0, []
     while start < len(text):
         while start < len(text) and text[start].isspace():
@@ -143,6 +166,14 @@ NIE przepisuj cytatu i nie twórz identyfikatorów. Program pobierze cytat z kat
 Podobieństwo tematu nie wystarcza. Podpis lub nazwisko autora nie odpowiada na
 pytanie o sposób wykonania czynności. W takim przypadku zwróć items=[].
 Dla pytań o listę wymień osobno wszystkie istotne pozycje z tego fragmentu.
+Lista kolumn w pytaniu NIE oznacza prośby o wszystkie wiersze tabeli.
+Jeżeli pytanie wskazuje jedną kondycję, osobę, produkt lub inny konkretny
+wiersz, wyodrębnij wyłącznie dane tego wiersza. Nie streszczaj całej tabeli.
+Pozostałe wiersze pomiń, nawet jeśli należą do tego samego dowodu lub fragmentu.
+Dla pytania o wartości w kilku kolumnach jednego wiersza utwórz jedną
+informację obejmującą wskazane kolumny. Zachowaj zarówno procenty, jak i
+liczby w nawiasach oraz określenia takie jak zwiększony lub zmniejszony.
+Nazwy kolumn odczytaj z mapowania c1, c2 itd.; nie zgaduj ich znaczenia.
 Nie pomijaj pozycji wymienionych razem. Uwzględniaj sens fragmentu, nie tylko
 identyczne słowa jak w pytaniu, ale nie dopisuj niepodanych właściwości.
 Nie podawaj efektów, historii ani sposobów użycia,
@@ -188,6 +219,13 @@ Każdy dowód musi uzasadniać całe twierdzenie. Twierdzenia autora przypisuj �
 Nie dodawaj markerów cytowania do text; zrobi to program.
 Teraz otrzymujesz WYODRĘBNIONE informacje, nie pełne fragmenty.
 Połącz informacje bezpośrednio odpowiadające na pytanie i usuń powtórzenia.
+Ponownie sprawdź zakres pytania. Nie musisz wykorzystać wszystkich items.
+Pomiń informacje o innych wierszach, kondycjach, osobach lub produktach,
+jeśli pytanie ich nie dotyczy, nawet gdy ekstrakcja je dostarczyła.
+Pytanie o kilka kolumn jednego wiersza wymaga tylko danych tego wiersza,
+a nie listy wszystkich kondycji z tabeli. Zachowaj procenty i liczby w nawiasach.
+Nie zamieniaj danych przedstawionych przez autora na ogólne twierdzenia
+o skuteczności: dla tabeli użyj sformułowania „Według tabeli” lub równoważnego.
 Dla pytań o listę zachowaj różne pozycje ze wszystkich źródeł; nie dodawaj
 efektów, historii lub sposobów użycia, jeśli pytanie prosi tylko o nazwy.
 Nie twórz nowych identyfikatorów ani nie dopisuj informacji.
@@ -431,7 +469,9 @@ def main():
               'generator_version': VERSION, 'query': query, 'sources': sources,
               'search_sha256': search_hash, 'index_sha256': report['output_sha256'],
               'retrieval_model': report['model'], 'mode': args.mode, 'stages': [],
-              'synthesis_prompt_version': 1 if args.mode == 'two-stage' else None,
+              'synthesis_prompt_version': 2 if args.mode == 'two-stage' else None,
+              'extraction_prompt_version': 2 if args.mode == 'two-stage' else None,
+              'evidence_catalog_version': 2,
               'thinking_mode': args.think, 'options': options,
               'validation_scope': 'schema, citation IDs and literal quotes; not semantic entailment'}
     if assessment_audit is not None:

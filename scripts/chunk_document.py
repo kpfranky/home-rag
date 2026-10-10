@@ -6,10 +6,12 @@ from collections import Counter
 from copy import deepcopy
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
-VERSION = '0.1.0'
+VERSION = '0.2.1'
+PICTURE_TEXT_COVERAGE = 0.90
 ROLES = ('body', 'front_matter', 'document_index', 'legal_notice')
 ABBREVIATIONS = {'np', 'mgr', 'dr', 'prof', 'inż', 'łac', 'itd', 'itp', 'm.in'}
 
@@ -98,15 +100,134 @@ def table_groups(data, max_chars):
         yield pending
 
 
-def build_chunks(records, max_chars=1200, roles=('body',), allow_review=False):
+def valid_box(entry):
+    value = entry.get('bbox_normalized')
+    if not isinstance(value, dict):
+        return None
+    try:
+        coords = [value[k] for k in ('left', 'top', 'right', 'bottom')]
+        if any(isinstance(v, bool) for v in coords):
+            return None
+        left, top, right, bottom = map(float, coords)
+        if not all(math.isfinite(v) and 0 <= v <= 1 for v in (left, top, right, bottom)):
+            return None
+        if left >= right or top >= bottom:
+            return None
+        return left, top, right, bottom
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def picture_text_candidates(records):
+    """Quarantine plain OCR text geometrically contained in a picture region.
+
+    This does not interpret charts, repair labels or associate values with series.
+    Captions and headings remain eligible. No source record is modified.
+    """
+    pictures = {}
+    for record in records:
+        if record.get('record_type') != 'picture':
+            continue
+        key = (record.get('source_id'), record.get('source_sha256'))
+        for entry in record.get('provenance') or []:
+            box = valid_box(entry)
+            if box:
+                pictures.setdefault((*key, entry.get('page_number')), []).append(
+                    (record.get('record_id'), box))
+    found = {}
+    uncertain = []
+    for record in records:
+        if record.get('record_type') != 'text' or record.get('subtype') != 'text':
+            continue
+        entries = record.get('provenance') or []
+        matches, fractions = set(), []
+        missing_box = False
+        partial = False
+        same_page_picture = False
+        for entry in entries:
+            key = (record.get('source_id'), record.get('source_sha256'), entry.get('page_number'))
+            candidates = pictures.get(key, [])
+            same_page_picture |= bool(candidates)
+            box = valid_box(entry)
+            if box is None:
+                missing_box = True
+                continue
+            left, top, right, bottom = box
+            area = (right - left) * (bottom - top)
+            maximum = 0.0
+            for rid, picture in candidates:
+                pl, pt, pr, pb = picture
+                intersection = max(0.0, min(right, pr) - max(left, pl)) * max(0.0, min(bottom, pb) - max(top, pt))
+                ratio = intersection / area
+                maximum = max(maximum, ratio)
+                if ratio >= PICTURE_TEXT_COVERAGE:
+                    matches.add(rid)
+            fractions.append(maximum)
+            partial |= 0 < maximum < PICTURE_TEXT_COVERAGE
+        if entries and not missing_box and fractions and min(fractions) >= PICTURE_TEXT_COVERAGE:
+            found[record.get('record_id')] = {
+                'picture_record_ids': sorted(matches),
+                'minimum_text_area_coverage': round(min(fractions), 6),
+            }
+        elif partial or (missing_box and same_page_picture):
+            uncertain.append({'record_id': record.get('record_id'),
+                              'reason': 'partial_picture_overlap_or_missing_bbox'})
+    return found, uncertain
+
+
+def validate_record_reviews(records, review, input_sha256, uncertain):
+    if review is None:
+        return {}
+    if not isinstance(review, dict) or review.get('schema_name') != 'home-rag-visual-text-reviews':
+        raise ValueError('Expected home-rag-visual-text-reviews')
+    if type(review.get('schema_version')) is not int or review['schema_version'] != 1:
+        raise ValueError('Unsupported record-review schema')
+    if not input_sha256 or review.get('input_sha256') != input_sha256:
+        raise ValueError('Record reviews/normalized input SHA-256 mismatch')
+    entries = review.get('records')
+    if not isinstance(entries, list):
+        raise ValueError('Record review must contain records list')
+    allowed = {x['record_id'] for x in uncertain}
+    known = {r['record_id']: r for r in records}
+    decisions = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError('Invalid record review')
+        rid = entry.get('record_id')
+        if not isinstance(rid, str) or rid not in allowed or rid in decisions:
+            raise ValueError('Unknown, non-candidate or duplicate reviewed record')
+        if entry.get('decision') not in {'keep', 'defer_to_vision'}:
+            raise ValueError('Unknown record-review decision')
+        if not isinstance(entry.get('note'), str) or not entry['note'].strip():
+            raise ValueError('Record-review note required')
+        if known[rid].get('record_type') != 'text' or known[rid].get('subtype') != 'text':
+            raise ValueError('Only plain text candidates can be reviewed')
+        decisions[rid] = deepcopy(entry)
+    if set(decisions) != allowed:
+        raise ValueError('Record reviews must resolve every pending candidate')
+    return decisions
+
+
+def build_chunks(records, max_chars=1200, roles=('body',), allow_review=False,
+                 exclude_picture_text=False, record_reviews=None, input_sha256=None):
     if type(max_chars) is not int or max_chars < 1:
         raise ValueError('max_chars must be a positive integer')
     if not roles or not set(roles) <= set(ROLES):
         raise ValueError('Unknown or empty page roles')
+    if type(exclude_picture_text) is not bool:
+        raise ValueError('exclude_picture_text must be a boolean')
+    candidates, uncertain = picture_text_candidates(records) if exclude_picture_text else ({}, [])
+    if record_reviews is not None and not exclude_picture_text:
+        raise ValueError('Record reviews require --exclude-picture-text')
+    decisions = validate_record_reviews(records, record_reviews, input_sha256, uncertain)
+    unresolved = [x for x in uncertain if x['record_id'] not in decisions]
     chunks, skipped, seen = [], [], set()
     stats = Counter()
     config = {'max_chars': max_chars, 'roles': sorted(set(roles)),
-              'allow_review_normalization': allow_review, 'overlap_chars': 0}
+              'allow_review_normalization': allow_review, 'overlap_chars': 0,
+              'exclude_picture_text': exclude_picture_text,
+              'picture_text_min_coverage': PICTURE_TEXT_COVERAGE if exclude_picture_text else None,
+              'record_reviews_sha256': hashlib.sha256(json.dumps(record_reviews, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest() if record_reviews is not None else None}
     for record in records:
         rid = record.get('record_id')
         if not rid or rid in seen:
@@ -136,9 +257,18 @@ def build_chunks(records, max_chars=1200, roles=('body',), allow_review=False):
             reason = 'normalization_requires_review'
         elif record.get('subtype') == 'section_header':
             reason = 'heading_used_as_context'
+        elif rid in decisions and decisions[rid]['decision'] == 'defer_to_vision':
+            reason = 'reviewed_text_pending_vision'
+        elif rid in candidates:
+            reason = 'text_inside_picture_pending_vision'
         if reason:
             stats[reason] += 1
-            skipped.append({'record_id': rid, 'reason': reason})
+            skipped_entry = {'record_id': rid, 'reason': reason}
+            if reason == 'text_inside_picture_pending_vision':
+                skipped_entry.update(candidates[rid])
+            if rid in decisions:
+                skipped_entry['record_review'] = deepcopy(decisions[rid])
+            skipped.append(skipped_entry)
             continue
         base = {key: deepcopy(record.get(key)) for key in (
             'source_id', 'source_sha256', 'page_numbers', 'printed_page_labels',
@@ -185,7 +315,15 @@ def build_chunks(records, max_chars=1200, roles=('body',), allow_review=False):
               'by_type': dict(Counter(c['chunk_type'] for c in chunks)),
               'oversized_chunks': sum(c['oversized'] for c in chunks),
               'hard_splits': sum(c.get('split_boundary') == 'hard' for c in chunks),
-              'skipped_counts': dict(stats), 'skipped_records': skipped}
+              'skipped_counts': dict(stats), 'skipped_records': skipped,
+              'visual_text_review_records': unresolved,
+              'record_reviews': deepcopy(record_reviews),
+              'resolved_visual_text_reviews': list(decisions.values()),
+              'limitations': [
+                  'Geometry filtering does not interpret charts or certify OCR correctness.',
+                  'Captions remain source text; they do not validate visual conclusions.',
+                  'Partially overlapping text is retained and listed for manual review.',
+              ]}
     return chunks, report
 
 
@@ -197,17 +335,27 @@ def main():
     parser.add_argument('--max-chars', type=int, default=1200)
     parser.add_argument('--roles', nargs='+', choices=ROLES, default=['body'])
     parser.add_argument('--allow-review-normalization', action='store_true')
+    parser.add_argument('--exclude-picture-text', action='store_true',
+                        help='Odłóż tekst wewnątrz obrazów do analizy wizualnej (pokrycie >=90%).')
+    parser.add_argument('--record-reviews', type=Path,
+                        help='Decyzje dla tekstów na granicach obrazów, powiązane z SHA-256 normalizacji.')
     args = parser.parse_args()
     report_path = args.report or args.output.with_name('chunk_report.json')
     paths = [args.input_path.resolve(), args.output.resolve(), report_path.resolve()]
+    if args.record_reviews and args.record_reviews.resolve() in {args.output.resolve(), report_path.resolve()}:
+        parser.error('Output/report must not overwrite record reviews')
     if len(set(paths)) != 3:
         parser.error('Input, output and report must have different paths')
-    records = [json.loads(line) for line in args.input_path.read_text(encoding='utf-8').splitlines()
+    input_bytes = args.input_path.read_bytes()
+    input_sha256 = hashlib.sha256(input_bytes).hexdigest()
+    review = json.loads(args.record_reviews.read_text(encoding='utf-8')) if args.record_reviews else None
+    records = [json.loads(line) for line in input_bytes.decode('utf-8').splitlines()
                if line.strip()]
     chunks, report = build_chunks(records, args.max_chars, args.roles,
-                                  args.allow_review_normalization)
+                                  args.allow_review_normalization, args.exclude_picture_text,
+                                  review, input_sha256)
     payload = ''.join(json.dumps(c, ensure_ascii=False, sort_keys=True) + '\n' for c in chunks)
-    report['input_sha256'] = hashlib.sha256(args.input_path.read_bytes()).hexdigest()
+    report['input_sha256'] = input_sha256
     report['output_sha256'] = hashlib.sha256(payload.encode('utf-8')).hexdigest()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,6 +365,7 @@ def main():
     print(f'Zapisano: {args.output}; chunki: {len(chunks)}; typy: {report["by_type"]}')
     print(f'Pominięte: {report["skipped_counts"]}; ponad limit: {report["oversized_chunks"]}')
     print('SHA-256:', report['output_sha256'])
+    print('Teksty do kontroli granic obrazów:', len(report['visual_text_review_records']))
     print('Raport:', report_path)
 
 

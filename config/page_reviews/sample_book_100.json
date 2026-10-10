@@ -1,0 +1,138 @@
+{
+  "schema_name": "home-rag-page-reviews",
+  "schema_version": 1,
+  "source_sha256": "b757ccd2f0d05f06a6dbc20c3f4518891926e99d72479425f84b6beaa0647372",
+  "review_basis": "Opis i potwierdzenie układu przez właściciela skanu, 2026-10-09; nie jest to kontrola treści OCR ani analiza wizualna modelu.",
+  "pages": [
+    {
+      "page_number": 4,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu."
+    },
+    {
+      "page_number": 8,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 9,
+      "confirmed": true,
+      "layout": "dedication",
+      "note": "Dedykacja: trzy słowa na dole strony."
+    },
+    {
+      "page_number": 10,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 12,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 18,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 25,
+      "confirmed": true,
+      "layout": "illustrated_opener",
+      "note": "Początek rozdziału: obraz u góry, tytuł, cytat Einsteina, tekst około 35% strony."
+    },
+    {
+      "page_number": 27,
+      "confirmed": true,
+      "layout": "part_divider",
+      "note": "Tytuł części pierwszej i duży okrągły obraz w dolnej części."
+    },
+    {
+      "page_number": 28,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 38,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 49,
+      "confirmed": true,
+      "layout": "part_divider",
+      "note": "Tytuł części drugiej i ilustracja, układ analogiczny do strony 27."
+    },
+    {
+      "page_number": 50,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 51,
+      "confirmed": true,
+      "layout": "illustrated_opener",
+      "note": "Wstęp do części drugiej: ilustracja, tytuł i tekst od około połowy strony."
+    },
+    {
+      "page_number": 53,
+      "confirmed": true,
+      "layout": "illustrated_opener",
+      "note": "Ilustrowany początek rozdziału, układ podobny do strony 51."
+    },
+    {
+      "page_number": 66,
+      "confirmed": true,
+      "layout": "blank",
+      "note": "Pusta strona potwierdzona przez właściciela skanu po OCR."
+    },
+    {
+      "page_number": 74,
+      "confirmed": true,
+      "layout": "visual_page",
+      "note": "Trzy wykresy zajmujące prawie całą stronę."
+    },
+    {
+      "page_number": 79,
+      "confirmed": true,
+      "layout": "visual_page",
+      "note": "Jeden wykres i dwa zdjęcia z podpisem, razem cała strona."
+    },
+    {
+      "page_number": 82,
+      "confirmed": true,
+      "layout": "visual_page",
+      "note": "Cztery zdjęcia w siatce 2x2, jeden podpis."
+    },
+    {
+      "page_number": 85,
+      "confirmed": true,
+      "layout": "mixed_visual",
+      "note": "Nagłówek, tytuł i tekst do 20% strony, dwa zdjęcia i podpis."
+    },
+    {
+      "page_number": 97,
+      "confirmed": true,
+      "layout": "table_page",
+      "note": "Nagłówek, trzy linie tekstu, duża tabela z czterema kolumnami.",
+      "expected_tables": 1,
+      "expected_table_columns": 4
+    },
+    {
+      "page_number": 98,
+      "confirmed": true,
+      "layout": "table_page",
+      "note": "Nagłówek i dwie tabele z czterema kolumnami, każda z podpisem.",
+      "expected_tables": 2,
+      "expected_table_columns": 4
+    }
+  ]
+}

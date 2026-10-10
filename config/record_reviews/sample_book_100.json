@@ -1,0 +1,88 @@
+{
+  "schema_name": "home-rag-visual-text-reviews",
+  "schema_version": 1,
+  "input_sha256": "7e012b0b4559199ddd1998886ecab6771a7370b9e49d92d2ae0e4212ff408bd0",
+  "review_basis": "Ocena wydruku tekstów OCR z 2026-10-09; bez kontroli obrazów. Fragmenty bez kontekstu odłożone do analizy wizualnej, nie usunięte z normalizacji.",
+  "records": [
+    {
+      "record_id": "sample_book_100:p0055:b0052",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0056:b0018",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0060:b0004",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0060:b0006",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0060:b0008",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0068:b0026",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0070:b0013",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0071:b0000",
+      "decision": "keep",
+      "note": "Spójny akapit narracyjny; zachować oryginalny tekst i pochodzenie."
+    },
+    {
+      "record_id": "sample_book_100:p0075:b0032",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0078:b0020",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0089:b0027",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0091:b0036",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0092:b0018",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0092:b0032",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0093:b0005",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    },
+    {
+      "record_id": "sample_book_100:p0093:b0006",
+      "decision": "defer_to_vision",
+      "note": "Krótki fragment OCR bez samodzielnego kontekstu; odłożyć razem z ilustracją, bez zgadywania wartości."
+    }
+  ]
+}
