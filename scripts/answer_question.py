@@ -12,8 +12,9 @@ import urllib.parse
 import urllib.request
 
 from search_chunks import load_index
+from table_scope import requested_rows, row_spans
 
-VERSION = '0.3.1'
+VERSION = '0.4.0'
 MAX_CLAIMS = 16
 NO_ANSWER = 'Brak odpowiedzi w dostarczonych źródłach.'
 SYSTEM = '''Odpowiadasz po polsku wyłącznie na podstawie dostarczonych fragmentów.
@@ -118,10 +119,49 @@ def evidence_catalog(source):
     return catalog
 
 
-def extraction_schema(source):
+def focused_catalog(source, query=None):
+    text = source['chunk']['text']
+    rows = requested_rows(text, query) if source['chunk'].get('chunk_type') == 'table' else []
+    if not rows:
+        return evidence_catalog(source)
+    result = []
+    first_row_start = row_spans(text)[0][2]
+    for row, label, start, end in rows:
+        # Preserve original contiguous quotes and original character offsets.
+        if start == first_row_start and text[:start].startswith('Kolumny:'):
+            start = 0
+        temp = deepcopy(source)
+        temp['chunk']['text'] = text[start:end]
+        temp['chunk']['chunk_type'] = 'text'
+        for index, entry in enumerate(evidence_catalog(temp), 1):
+            entry['evidence_id'] = f"{source['source_id']}:R{row}:E{index}"
+            entry['text_span'] = {key: offset + start for key, offset in entry['text_span'].items()}
+            result.append(entry)
+    return result
+
+
+def focused_text(source, query):
+    text = source['chunk']['text']
+    rows = requested_rows(text, query) if source['chunk'].get('chunk_type') == 'table' else []
+    if not rows:
+        return text
+    header = text[:row_spans(text)[0][2]]
+    return header + ''.join(text[start:end] for _, _, start, end in rows)
+
+
+def extraction_sources(query, sources):
+    matched = [source for source in sources
+               if source['chunk'].get('chunk_type') == 'table'
+               and requested_rows(source['chunk']['text'], query)]
+    # For an explicit table question with an identified row, only those tables
+    # supply extraction evidence. Original assessed sources remain in the audit.
+    return matched or sources
+
+
+def extraction_schema(source, query=None):
     schema = deepcopy(EXTRACTION_SCHEMA)
     schema['properties']['items']['items']['properties']['evidence_id']['enum'] = [
-        e['evidence_id'] for e in evidence_catalog(source)]
+        e['evidence_id'] for e in focused_catalog(source, query)]
     return schema
 
 
@@ -165,6 +205,13 @@ oraz evidence_id: identyfikator wpisu w katalogu dowodów uzasadniającego infor
 NIE przepisuj cytatu i nie twórz identyfikatorów. Program pobierze cytat z katalogu.
 Podobieństwo tematu nie wystarcza. Podpis lub nazwisko autora nie odpowiada na
 pytanie o sposób wykonania czynności. W takim przypadku zwróć items=[].
+Najpierw sprawdź, czy informacja odpowiada dokładnie na żądaną właściwość.
+Gdy pytanie dotyczy możliwości uogólniania wyników, nie wyodrębniaj samego
+opisu tworzenia lub rozszerzania kwestionariusza jako odpowiedzi.
+Nie wyciągaj własnych wniosków o ograniczeniach z powiązanego tematycznie tekstu.
+Zachowaj czas, warunki i stopień pewności źródła. Nie przekształcaj opisu
+przeszłych działań w zapowiedź przyszłych działań, również przy błędzie OCR.
+Gdy źródło jest opisem tekstowym, nazywaj je opisem lub fragmentem, nie tabelą.
 Dla pytań o listę wymień osobno wszystkie istotne pozycje z tego fragmentu.
 Lista kolumn w pytaniu NIE oznacza prośby o wszystkie wiersze tabeli.
 Jeżeli pytanie wskazuje jedną kondycję, osobę, produkt lub inny konkretny
@@ -174,25 +221,28 @@ Dla pytania o wartości w kilku kolumnach jednego wiersza utwórz jedną
 informację obejmującą wskazane kolumny. Zachowaj zarówno procenty, jak i
 liczby w nawiasach oraz określenia takie jak zwiększony lub zmniejszony.
 Nazwy kolumn odczytaj z mapowania c1, c2 itd.; nie zgaduj ich znaczenia.
+Przytocz nazwy kolumn dokładnie, bez parafraz. „Brak wyników” zachowaj jako
+„Brak wyników”, nie zmieniaj na „brakujące wyniki”, co sugeruje brak danych.
 Nie pomijaj pozycji wymienionych razem. Uwzględniaj sens fragmentu, nie tylko
 identyczne słowa jak w pytaniu, ale nie dopisuj niepodanych właściwości.
 Nie podawaj efektów, historii ani sposobów użycia,
 jeżeli pytanie prosi wyłącznie o nazwy. Twierdzenia książki przypisuj źródłu.
 Zwróć wyłącznie JSON zgodny ze schematem: '''
-    return [{'role': 'system', 'content': instruction + json.dumps(extraction_schema(source))},
+    return [{'role': 'system', 'content': instruction + json.dumps(extraction_schema(source, query))},
             {'role': 'user', 'content': json.dumps({
                 'question': query, 'source_id': source['source_id'],
-                'text': source['chunk']['text'], 'evidence_catalog': evidence_catalog(source)},
+                'text': focused_text(source, query), 'chunk_type': source['chunk'].get('chunk_type'),
+                'section_path': source['chunk'].get('section_path', []), 'evidence_catalog': focused_catalog(source, query)},
                 ensure_ascii=False)}]
 
 
-def validate_extraction(value, source):
+def validate_extraction(value, source, query=None):
     if not isinstance(value, dict) or set(value) != {'items'} or not isinstance(value['items'], list):
         raise ValueError('Invalid extraction schema')
     if len(value['items']) > MAX_CLAIMS:
         raise ValueError('Too many extracted items')
     claims, resolved = [], []
-    catalog = {e['evidence_id']: e for e in evidence_catalog(source)}
+    catalog = {e['evidence_id']: e for e in focused_catalog(source, query)}
     for item in value['items']:
         if not isinstance(item, dict) or set(item) != {'text', 'evidence_id'}:
             raise ValueError('Invalid extracted item')
@@ -201,7 +251,7 @@ def validate_extraction(value, source):
             raise ValueError(f'Unknown extraction evidence_id: {eid!r}')
         claims.append({'text': item['text'], 'evidence': [{
             'source_id': source['source_id'], 'quote': catalog[eid]['quote']}]})
-        resolved.append(dict(catalog[eid], text=item['text']))
+        resolved.append(dict(catalog[eid], text=item['text'], chunk_type=source['chunk'].get('chunk_type')))
     validate_answer({'answerable': bool(claims), 'claims': claims}, [source])
     return resolved
 
@@ -224,8 +274,15 @@ Pomiń informacje o innych wierszach, kondycjach, osobach lub produktach,
 jeśli pytanie ich nie dotyczy, nawet gdy ekstrakcja je dostarczyła.
 Pytanie o kilka kolumn jednego wiersza wymaga tylko danych tego wiersza,
 a nie listy wszystkich kondycji z tabeli. Zachowaj procenty i liczby w nawiasach.
+Nazwy kolumn przytocz dokładnie z dowodów lub wyodrębnionych informacji.
+„Brak wyników” nie zmieniaj na „brakujące wyniki”; nie sugeruj braku danych.
+Nie zamieniaj informacji pobocznych w dodatkowe zdania odpowiedzi. Przy pytaniu
+o jedną właściwość odpowiedz tylko o tej właściwości. Zachowaj czas i warunki
+źródła; nie zmieniaj przeszłości na przyszłość ani opisu na zalecenie.
 Nie zamieniaj danych przedstawionych przez autora na ogólne twierdzenia
-o skuteczności: dla tabeli użyj sformułowania „Według tabeli” lub równoważnego.
+o skuteczności. Użyj „Według tabeli” wyłącznie wtedy, gdy cytowany dowód
+rzeczywiście pochodzi z tabeli. Jeżeli masz tylko opis, użyj „Według opisu”
+i jawnie zaznacz, że nie znaleziono fragmentu tabeli wymaganego w pytaniu.
 Dla pytań o listę zachowaj różne pozycje ze wszystkich źródeł; nie dodawaj
 efektów, historii lub sposobów użycia, jeśli pytanie prosi tylko o nazwy.
 Nie twórz nowych identyfikatorów ani nie dopisuj informacji.
@@ -309,7 +366,7 @@ def whitespace(text):
     return ' '.join(text.split())
 
 
-def validate_answer(answer, sources):
+def validate_answer(answer, sources, allow_source_brackets=False):
     if (not isinstance(answer, dict) or set(answer) != {'answerable', 'claims'}
             or type(answer['answerable']) is not bool or not isinstance(answer['claims'], list)):
         raise ValueError('Invalid answer schema')
@@ -324,7 +381,7 @@ def validate_answer(answer, sources):
     for index, claim in enumerate(claims, 1):
         if (not isinstance(claim, dict) or set(claim) != {'text', 'evidence'}
                 or not isinstance(claim['text'], str) or not claim['text'].strip()
-                or len(claim['text']) > 800 or '[' in claim['text'] or ']' in claim['text']
+                or len(claim['text']) > 800 or (not allow_source_brackets and ('[' in claim['text'] or ']' in claim['text']))
                 or not isinstance(claim['evidence'], list) or not 1 <= len(claim['evidence']) <= 3):
             raise ValueError('Invalid claim or missing evidence')
         for evidence in claim['evidence']:
@@ -425,6 +482,24 @@ def select_assessed_sources(path, query, sources, search_hash, index_hash):
                       'report': assessment}
 
 
+def grounded_answer(query, retrieved_sources, selected_sources, assessment):
+    from grounded_evidence import table_answer, selected_answer
+    if assessment.get('assessment_mode') != 'evidence-selection':
+        raise ValueError('evidence-first requires an assess_evidence report')
+    table = table_answer(query, retrieved_sources)
+    if 'structured_table' in assessment:
+        if table is None or table != assessment['structured_table']:
+            raise ValueError('Structured table differs from original sources')
+        answer = table
+    else:
+        catalog = [e for source in retrieved_sources for e in evidence_catalog(source)]
+        answer = selected_answer(assessment['evidence_selection'], catalog)
+    used = {e['source_id'] for claim in answer['claims'] for e in claim['evidence']}
+    if used != {s['source_id'] for s in selected_sources}:
+        raise ValueError('Selected sources and direct evidence disagree')
+    return validate_answer(answer, selected_sources, allow_source_brackets=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('search_path', type=Path)
@@ -435,7 +510,7 @@ def main():
     parser.add_argument('--model', help='Exact installed Ollama model name')
     parser.add_argument('--api-url', default='http://127.0.0.1:11434')
     parser.add_argument('--top-k', type=int, default=5)
-    parser.add_argument('--mode', choices=('two-stage', 'single-pass'), default='two-stage')
+    parser.add_argument('--mode', choices=('two-stage', 'single-pass', 'evidence-first'), default='two-stage')
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--think', choices=('false', 'true', 'auto'), default='false',
                         help='Tryb myślenia Ollama; auto używa ustawienia modelu')
@@ -469,22 +544,41 @@ def main():
               'generator_version': VERSION, 'query': query, 'sources': sources,
               'search_sha256': search_hash, 'index_sha256': report['output_sha256'],
               'retrieval_model': report['model'], 'mode': args.mode, 'stages': [],
-              'synthesis_prompt_version': 2 if args.mode == 'two-stage' else None,
-              'extraction_prompt_version': 2 if args.mode == 'two-stage' else None,
-              'evidence_catalog_version': 2,
+              'synthesis_prompt_version': 4 if args.mode == 'two-stage' else None,
+              'extraction_prompt_version': 5 if args.mode == 'two-stage' else None,
+              'evidence_catalog_version': 3,
               'thinking_mode': args.think, 'options': options,
               'validation_scope': 'schema, citation IDs and literal quotes; not semantic entailment'}
     if assessment_audit is not None:
         output.update(assessment=assessment_audit, retrieved_sources=retrieved_sources,
                       selected_source_ids=[source['source_id'] for source in sources])
         print('Assessment selected:', output['selected_source_ids'])
+    extract_from = extraction_sources(query, sources)
+    output['extraction_source_ids'] = [s['source_id'] for s in extract_from]
     if args.prepare_only:
         output.update(status='prepared', messages=messages, response_schema=SCHEMA)
         if args.mode == 'two-stage':
-            output['extraction_prompts'] = [extraction_messages(query, s) for s in sources]
+            output['extraction_prompts'] = [extraction_messages(query, s) for s in extract_from]
             output['extraction_schema'] = EXTRACTION_SCHEMA
         write_output(args.output, output)
         print('Prepared prompt:', args.output)
+        return
+    if args.mode == 'evidence-first':
+        if assessment_audit is None:
+            raise SystemExit('evidence-first requires --assessment from assess_evidence.py')
+        try:
+            answer = grounded_answer(query, retrieved_sources, sources, assessment_audit['report'])
+        except (ValueError, KeyError, TypeError) as error:
+            output.update(status='validation_failed', error=str(error))
+            write_output(args.output, output)
+            raise SystemExit(str(error))
+        output.update(status='answered' if answer['answerable'] else 'insufficient_evidence',
+                      answer=answer, rendered_answer=render_answer(answer, sources),
+                      composition='structured-table' if 'structured_table' in assessment_audit['report'] else 'verbatim-evidence',
+                      validation_scope='exact original evidence; selection relevance remains model judged')
+        write_output(args.output, output)
+        print(output['rendered_answer'])
+        print('Saved:', args.output)
         return
     if not sources:
         answer = {'answerable': False, 'claims': []}
@@ -499,12 +593,12 @@ def main():
         if args.mode == 'two-stage':
             items = []
             output['extracted_items'] = items
-            for source in sources:
+            for source in extract_from:
                 print('Extracting:', source['source_id'], flush=True)
                 extracted = generate_stage(args, name, options,
-                    extraction_messages(query, source), extraction_schema(source), output,
+                    extraction_messages(query, source), extraction_schema(source, query), output,
                     'extraction', source['source_id'])
-                items.extend(validate_extraction(extracted, source))
+                items.extend(validate_extraction(extracted, source, query))
                 output['stages'][-1]['validation'] = 'passed'
                 write_output(args.output, output)
             if items:

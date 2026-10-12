@@ -18,7 +18,7 @@ class AskTests(unittest.TestCase):
         for name in ['embeddings.jsonl', 'embedding_report.json']:
             (index / name).write_text('{}', encoding='utf-8')
         (root / 'scripts').mkdir()
-        for name in ['search_chunks.py', 'assess_sources.py', 'answer_question.py']:
+        for name in ['search_chunks.py', 'assess_sources.py', 'assess_evidence.py', 'answer_question.py']:
             (root / 'scripts' / name).write_text('', encoding='utf-8')
         return parser().parse_args([question, '--index-dir', 'index with spaces',
                                    '--output-dir', 'runs/test'])
@@ -60,6 +60,8 @@ class AskTests(unittest.TestCase):
                 self.assertEqual(Path(command[command.index('--embeddings')+1]).resolve(),
                                  (root/'index with spaces/embeddings.jsonl').resolve())
             self.assertIn('--assessment', calls[2])
+            self.assertEqual(Path(calls[1][1]).name, 'assess_evidence.py')
+            self.assertEqual(calls[2][calls[2].index('--mode')+1], 'evidence-first')
             manifest = json.loads((output/'run.json').read_text())
             self.assertEqual(manifest['status'], 'completed')
             self.assertTrue(all(s['status']=='completed' for s in manifest['stages']))

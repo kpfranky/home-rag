@@ -8,11 +8,12 @@ import json
 import math
 import os
 from pathlib import Path
+from table_scope import requested_rows
 
 from embed_chunks import (DIMENSION, MAX_TOKENS, MODEL, cached_model,
                           prepare_inputs, save_json, validate_vectors)
 
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 
 
 def load_index(path, report_path, manifest):
@@ -64,7 +65,7 @@ def prepare_query(query, tokenizer):
     return text, count
 
 
-def rank_chunks(records, vectors, query_vector, top_k):
+def rank_chunks(records, vectors, query_vector, top_k, table_query=None):
     if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
         raise ValueError('top-k must be a positive integer')
     if not records or len(records) != len(vectors):
@@ -73,7 +74,11 @@ def rank_chunks(records, vectors, query_vector, top_k):
     query = validate_vectors([query_vector], 1)[0]
     scored = [(math.fsum(a * b for a, b in zip(vector, query)), record)
               for record, vector in zip(records, values)]
-    scored.sort(key=lambda item: (-item[0], item[1]['chunk_id']))
+    def matches_table(record):
+        chunk = record['chunk']
+        return (chunk.get('chunk_type') == 'table'
+                and bool(requested_rows(chunk['text'], table_query)))
+    scored.sort(key=lambda item: (not matches_table(item[1]), -item[0], item[1]['chunk_id']))
     return [{'rank': rank, 'score': score, 'chunk_id': record['chunk_id'],
              'chunk': deepcopy(record['chunk'])}
             for rank, (score, record) in enumerate(scored[:top_k], 1)]
@@ -83,6 +88,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input_path', type=Path, help='embeddings.jsonl')
     parser.add_argument('--query', required=True)
+    parser.add_argument('--prefer-table-rows', action='store_true',
+                        help='For explicit table questions prefer matching row labels before cosine')
     parser.add_argument('--top-k', type=int, default=5)
     parser.add_argument('--embedding-report', type=Path)
     parser.add_argument('--model-dir', type=Path,
@@ -121,13 +128,15 @@ def main():
     query_vector = model.encode([query_text], normalize_embeddings=True,
                                 convert_to_numpy=True, show_progress_bar=False,
                                 prompt='')[0]
-    results = rank_chunks(records, vectors, query_vector, args.top_k)
+    results = rank_chunks(records, vectors, query_vector, args.top_k,
+                          table_query=args.query if args.prefer_table_rows else None)
     output = {'schema_name': 'home-rag-search', 'schema_version': 1,
               'retriever_version': VERSION, 'query': args.query,
               'query_embedding_text': query_text, 'query_tokens': token_count,
               'model_id': MODEL, 'model_revision': manifest['revision'],
               'index_sha256': report['output_sha256'], 'index_chunks': len(records),
               'requested_top_k': args.top_k, 'metric': 'cosine_similarity',
+              'ranking_strategy': 'table_row_match_then_cosine' if args.prefer_table_rows else 'cosine',
               'results': results}
     if args.output:
         save_json(args.output, output)

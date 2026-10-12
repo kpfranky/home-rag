@@ -1,0 +1,266 @@
+{
+  "schema_name": "home-rag-evaluation-suite",
+  "schema_version": 1,
+  "scope": "sample_book_100: tekst i sprawdzona tabela PDF 97; bez wykresów",
+  "reference_basis": "Dotychczasowe fragmenty źródłowe i przegląd skanu PDF 97. Negatywne pytania są spoza tematyki książki. Numery PDF orientacyjne; sprawdzenia opierają się na treści, nie rankingu S1/S2.",
+  "cases": [
+    {
+      "id": "T01",
+      "question": "Jakie wartości podaje tabela dla alergii w kolumnach pozytywne efekty, brak wyników i negatywne efekty?",
+      "answerable": true,
+      "expected_answer": "Według tabeli: pozytywne efekty 59% (61), brak wyników 41% (43), negatywne efekty 0% (0). Wyłącznie alergia.",
+      "answer_patterns": [
+        "\\b59\\s*%\\s*\\(61(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+104(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b41\\s*%\\s*\\(43(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+104(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b0\\s*%\\s*\\(0(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+104(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)"
+      ],
+      "source_patterns": [
+        "r1 c1: alergia",
+        "\\b59\\s*%\\s*\\(61\\)",
+        "\\b41\\s*%\\s*\\(43\\)",
+        "\\b0\\s*%\\s*\\(0\\)"
+      ],
+      "category": "table",
+      "reference_pdf_pages": [
+        97
+      ]
+    },
+    {
+      "id": "T01P",
+      "question": "Odczytaj z tabeli odsetki i liczby osób dla alergii: pozytywne efekty, brak wyników, negatywne efekty.",
+      "answerable": true,
+      "expected_answer": "Według tabeli: pozytywne efekty 59% (61), brak wyników 41% (43), negatywne efekty 0% (0). Wyłącznie alergia.",
+      "answer_patterns": [
+        "\\b59\\s*%\\s*\\(61(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+104(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b41\\s*%\\s*\\(43(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+104(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b0\\s*%\\s*\\(0(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+104(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)"
+      ],
+      "source_patterns": [
+        "r1 c1: alergia",
+        "\\b59\\s*%\\s*\\(61\\)",
+        "\\b41\\s*%\\s*\\(43\\)",
+        "\\b0\\s*%\\s*\\(0\\)"
+      ],
+      "category": "table",
+      "reference_pdf_pages": [
+        97
+      ]
+    },
+    {
+      "id": "T02",
+      "question": "Jakie wartości podaje tabela dla nadciśnienia tętniczego w kolumnach pozytywne efekty, brak wyników i negatywne efekty?",
+      "answerable": true,
+      "expected_answer": "Według tabeli: pozytywne efekty 73% (46), brak wyników 19% (12), negatywne efekty 8% (5). Wyłącznie nadciśnienie tętnicze.",
+      "answer_patterns": [
+        "\\b73\\s*%\\s*\\(46(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+63(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b19\\s*%\\s*\\(12(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+63(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b8\\s*%\\s*\\(5(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+63(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)"
+      ],
+      "source_patterns": [
+        "r19 c1: nadciśnienie",
+        "\\b73\\s*%\\s*\\(46\\)",
+        "\\b19\\s*%\\s*\\(12\\)",
+        "\\b8\\s*%\\s*\\(5\\)"
+      ],
+      "category": "table",
+      "reference_pdf_pages": [
+        97
+      ]
+    },
+    {
+      "id": "T02P",
+      "question": "Odczytaj z tabeli odsetki i liczby osób dla nadciśnienia tętniczego: pozytywne efekty, brak wyników, negatywne efekty.",
+      "answerable": true,
+      "expected_answer": "Według tabeli: pozytywne efekty 73% (46), brak wyników 19% (12), negatywne efekty 8% (5). Wyłącznie nadciśnienie tętnicze.",
+      "answer_patterns": [
+        "\\b73\\s*%\\s*\\(46(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+63(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b19\\s*%\\s*\\(12(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+63(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)",
+        "\\b8\\s*%\\s*\\(5(?:\\s+(?:osób|osoby|osoba))?(?:\\s+z\\s+63(?:\\s+(?:osób|osoby|osoba))?)?\\s*\\)"
+      ],
+      "source_patterns": [
+        "r19 c1: nadciśnienie",
+        "\\b73\\s*%\\s*\\(46\\)",
+        "\\b19\\s*%\\s*\\(12\\)",
+        "\\b8\\s*%\\s*\\(5\\)"
+      ],
+      "category": "table",
+      "reference_pdf_pages": [
+        97
+      ]
+    },
+    {
+      "id": "N06",
+      "question": "Jak autorka określa potencjał generalizacji wyników badania?",
+      "answerable": true,
+      "expected_answer": "Autorka określa potencjał generalizacji wyników jako ograniczony.",
+      "answer_patterns": [
+        "ograniczon"
+      ],
+      "source_patterns": [
+        "wyniki mają ograniczony potencjał generalizacji"
+      ],
+      "category": "prose",
+      "reference_pdf_pages": [
+        52
+      ]
+    },
+    {
+      "id": "N06P",
+      "question": "Co autorka mówi o możliwości uogólniania wyników swojego badania?",
+      "answerable": true,
+      "expected_answer": "Autorka określa potencjał generalizacji wyników jako ograniczony.",
+      "answer_patterns": [
+        "ograniczon"
+      ],
+      "source_patterns": [
+        "wyniki mają ograniczony potencjał generalizacji"
+      ],
+      "category": "prose",
+      "reference_pdf_pages": [
+        52
+      ]
+    },
+    {
+      "id": "P01",
+      "question": "Kto podpisał Słowo wstępu?",
+      "answerable": true,
+      "expected_answer": "mgr farm. Marcin Mól.",
+      "answer_patterns": [
+        "marcin mól"
+      ],
+      "source_patterns": [
+        "mgr farm. marcin mól"
+      ],
+      "category": "signature",
+      "reference_pdf_pages": [
+        17
+      ]
+    },
+    {
+      "id": "P01P",
+      "question": "Podaj imię i nazwisko osoby podpisanej pod Słowem wstępu.",
+      "answerable": true,
+      "expected_answer": "mgr farm. Marcin Mól.",
+      "answer_patterns": [
+        "marcin mól"
+      ],
+      "source_patterns": [
+        "mgr farm. marcin mól"
+      ],
+      "category": "signature",
+      "reference_pdf_pages": [
+        17
+      ]
+    },
+    {
+      "id": "L01",
+      "question": "Jakie substancje występują w muchomorze czerwonym według książki?",
+      "answerable": true,
+      "expected_answer": "Kwas ibotenowy, muscymol, muskaryna, muskazon, kwas tricholomowy, kwas stilozobowy, kwas stilozobinowy oraz kwasy propionowe. Nie dodawać substancji spoza źródeł.",
+      "answer_patterns": [
+        "iboten",
+        "muscymol",
+        "muskaryn",
+        "muskazon",
+        "tricholom",
+        "stilozobow",
+        "stilozobinow",
+        "propionow"
+      ],
+      "source_patterns": [
+        "iboten",
+        "muscymol",
+        "muskaryn",
+        "muskazon",
+        "tricholom",
+        "stilozobow",
+        "stilozobinow",
+        "propionow"
+      ],
+      "category": "list",
+      "reference_pdf_pages": [
+        14,
+        15,
+        16
+      ]
+    },
+    {
+      "id": "L02",
+      "question": "Jakie dwa główne związki izoksazolowe zawarte w grzybie wymienia książka?",
+      "answerable": true,
+      "expected_answer": "Kwas ibotenowy i muscymol.",
+      "answer_patterns": [
+        "iboten",
+        "muscymol"
+      ],
+      "source_patterns": [
+        "związki izoksazolowe",
+        "iboten",
+        "muscymol"
+      ],
+      "category": "prose",
+      "reference_pdf_pages": [
+        14
+      ]
+    },
+    {
+      "id": "N07",
+      "question": "Ile szczegółowych pytań zawierał kwestionariusz autorki?",
+      "answerable": true,
+      "expected_answer": "107 szczegółowych pytań.",
+      "answer_patterns": [
+        "\\b107\\b"
+      ],
+      "source_patterns": [
+        "\\b107\\b",
+        "pytań"
+      ],
+      "category": "prose",
+      "reference_pdf_pages": [
+        47,
+        53
+      ]
+    },
+    {
+      "id": "R01",
+      "question": "Jak założyć winnicę?",
+      "answerable": false,
+      "expected_answer": "Brak odpowiedzi w dostarczonych źródłach.",
+      "answer_patterns": [],
+      "source_patterns": [],
+      "category": "out_of_scope",
+      "reference_pdf_pages": []
+    },
+    {
+      "id": "R02",
+      "question": "Podaj schemat konfiguracji routera Wi-Fi.",
+      "answerable": false,
+      "expected_answer": "Brak odpowiedzi w dostarczonych źródłach.",
+      "answer_patterns": [],
+      "source_patterns": [],
+      "category": "out_of_scope",
+      "reference_pdf_pages": []
+    },
+    {
+      "id": "R03",
+      "question": "Jak zainstalować Python na macOS?",
+      "answerable": false,
+      "expected_answer": "Brak odpowiedzi w dostarczonych źródłach.",
+      "answer_patterns": [],
+      "source_patterns": [],
+      "category": "out_of_scope",
+      "reference_pdf_pages": []
+    },
+    {
+      "id": "R04",
+      "question": "Jakie są koszty instalacji fotowoltaicznej na dachu?",
+      "answerable": false,
+      "expected_answer": "Brak odpowiedzi w dostarczonych źródłach.",
+      "answer_patterns": [],
+      "source_patterns": [],
+      "category": "out_of_scope",
+      "reference_pdf_pages": []
+    }
+  ],
+  "revision": 3
+}

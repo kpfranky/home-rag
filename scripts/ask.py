@@ -9,7 +9,7 @@ import subprocess
 import sys
 import uuid
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 DEFAULT_INDEX = 'data/pages/sample_book_100_ocr/table_v010'
 
 
@@ -18,9 +18,10 @@ def parser():
     result.add_argument('question')
     result.add_argument('--index-dir', default=DEFAULT_INDEX, type=Path)
     result.add_argument('--output-dir', type=Path, help='New run directory inside the project')
+    result.add_argument('--answer-mode', choices=('evidence-first', 'two-stage'), default='evidence-first')
     result.add_argument('--model', default='qwen3.5:4b')
     result.add_argument('--think', choices=('false', 'true', 'auto'), default='false')
-    result.add_argument('--top-k', type=int, default=5)
+    result.add_argument('--top-k', type=int, default=8)
     result.add_argument('--api-url', default='http://127.0.0.1:11434')
     result.add_argument('--timeout', type=int, default=600, help='Ollama request timeout')
     result.add_argument('--embedding-image', default='home-rag-embedding:0.1.0')
@@ -47,7 +48,8 @@ def run_pipeline(args, root=None, runner=None):
         raise ValueError('top-k and timeout must be positive')
     index = within(root, args.index_dir)
     embeddings, report = index / 'embeddings.jsonl', index / 'embedding_report.json'
-    scripts = ['search_chunks.py', 'assess_sources.py', 'answer_question.py']
+    assessor = 'assess_evidence.py' if args.answer_mode == 'evidence-first' else 'assess_sources.py'
+    scripts = ['search_chunks.py', assessor, 'assess_sources.py', 'answer_question.py']
     required = [embeddings, report, *[root / 'scripts' / script for script in scripts]]
     missing = [str(path.relative_to(root)) for path in required if not path.is_file()]
     if missing:
@@ -66,15 +68,15 @@ def run_pipeline(args, root=None, runner=None):
         ['docker', 'run', '--rm', '--pull', 'never', '--network', 'none', '--user', f'{os.getuid()}:{os.getgid()}',
          '-e', 'HOME=/tmp', '-v', str(root) + ':/work', '-w', '/work', args.embedding_image,
          'scripts/search_chunks.py', docker_path(embeddings), '--embedding-report', docker_path(report),
-         '--query', args.question, '--top-k', str(args.top_k), '--output', docker_path(search)],
-        [sys.executable, str(root / 'scripts/assess_sources.py'), str(search),
+         '--query', args.question, '--prefer-table-rows', '--top-k', str(args.top_k), '--output', docker_path(search)],
+        [sys.executable, str(root / 'scripts' / assessor), str(search),
          *common, '--output', str(assessment)],
         [sys.executable, str(root / 'scripts/answer_question.py'), str(search),
-         *common, '--assessment', str(assessment), '--mode', 'two-stage', '--output', str(answer)],
+         *common, '--assessment', str(assessment), '--mode', args.answer_mode, '--output', str(answer)],
     ]
     manifest = {'schema_name': 'home-rag-run', 'schema_version': 1, 'runner_version': VERSION,
                 'status': 'running', 'query': args.question, 'index_dir': str(index),
-                'model': args.model, 'think': args.think, 'top_k': args.top_k,
+                'model': args.model, 'think': args.think, 'top_k': args.top_k, 'answer_mode': args.answer_mode,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'outputs': {'search': str(search), 'assessment': str(assessment), 'answer': str(answer)},
                 'stages': []}
