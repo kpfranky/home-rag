@@ -39,3 +39,7 @@ data/docling/*
 /data/backend_tests/
 /data/page_tests/
 /data/models/
+
+# Generated evaluation results and run artifacts
+/data/evaluations/
+/data/runs/
