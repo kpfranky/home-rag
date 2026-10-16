@@ -43,3 +43,5 @@ data/docling/*
 # Generated evaluation results and run artifacts
 /data/evaluations/
 /data/runs/
+
+/CodziennaPracaReadMe.txt
